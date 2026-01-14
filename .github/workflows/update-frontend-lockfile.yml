@@ -1,0 +1,26 @@
+name: Verify frontend build
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install frontend deps
+        working-directory: frontend
+        run: npm install
+
+      - name: Verify plugin exists
+        working-directory: frontend
+        run: node -e "require('@vitejs/plugin-react'); console.log('plugin ok')"
+
+      - name: Build frontend
+        working-directory: frontend
+        run: npm run build
