@@ -1,7 +1,7 @@
 export default function StatusBar({ status, wsStatus, mode }) {
   return (
-    <div className="status" style={{ marginBottom: 10, opacity: 0.9 }}>
-      Status: {status} | WS: {wsStatus} | Mode: {mode}
+    <div style={{ opacity: 0.9, fontSize: 13, color: "rgba(229,231,235,0.85)" }}>
+      Status: <b>{status}</b> &nbsp;|&nbsp; WS: <b>{wsStatus}</b> &nbsp;|&nbsp; Mode: <b>{mode}</b>
     </div>
   );
 }
