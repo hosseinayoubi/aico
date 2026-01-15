@@ -31,11 +31,10 @@ export default function App() {
   const reconnectTimerRef = useRef(null);
   const lastRequestIdRef = useRef("");
 
-  // برای ارسال با “مکث کوتاه” (فقط final را می‌فرستیم)
-  const sendDebounceRef = useRef(null);
+  // ✅ فقط final ها برای ارسال
   const bufferFinalRef = useRef("");
 
-  // throttle برای اینکه proactive زیادی call نزنه
+  // ✅ Proactive throttle: هر 5 ثانیه
   const lastSendTsRef = useRef(0);
 
   // auto-stop silence
@@ -138,7 +137,6 @@ export default function App() {
     let i = 0;
     setLiveReply("");
 
-    // اگر خالی بود همون خالی
     if (!words.length) return;
 
     typeTimerRef.current = setInterval(() => {
@@ -159,15 +157,6 @@ export default function App() {
       return;
     }
 
-    const now = Date.now();
-
-    // ✅ throttle: proactive کمتر call بزنه
-    const minGap = mode === "proactive" ? 1500 : 800;
-    if (now - lastSendTsRef.current < minGap) {
-      return;
-    }
-    lastSendTsRef.current = now;
-
     const requestId = makeId();
     lastRequestIdRef.current = requestId;
 
@@ -183,21 +172,23 @@ export default function App() {
     );
   }
 
-  function flushSend() {
+  function flushIfAllowed() {
     const text = (bufferFinalRef.current || "").trim();
     if (!text) return;
 
+    const now = Date.now();
+
+    // ✅ اینجاست که ۵ ثانیه‌ای می‌کنیم
+    const minGapMs = mode === "proactive" ? 5000 : 900;
+    if (now - lastSendTsRef.current < minGapMs) {
+      return; // هنوز زوده، صبر می‌کنیم
+    }
+
+    lastSendTsRef.current = now;
+
+    // ✅ بعد از ارسال پاک می‌کنیم تا دوباره همونو نفرستیم
     bufferFinalRef.current = "";
-    // ✅ فقط final متن تمیز میره سمت مدل
     sendToBackend(text);
-  }
-
-  function scheduleSendDebounced() {
-    if (sendDebounceRef.current) clearTimeout(sendDebounceRef.current);
-
-    // proactive کمی سریع‌تر
-    const delay = mode === "proactive" ? 650 : 900;
-    sendDebounceRef.current = setTimeout(() => flushSend(), delay);
   }
 
   async function startListening() {
@@ -216,6 +207,7 @@ export default function App() {
     setInterimText("");
     setFinalText("");
     bufferFinalRef.current = "";
+    lastSendTsRef.current = 0;
 
     try {
       recognitionRef.current?.start();
@@ -227,9 +219,6 @@ export default function App() {
     shouldListenRef.current = false;
     clearSilenceTimer();
 
-    if (sendDebounceRef.current) clearTimeout(sendDebounceRef.current);
-    sendDebounceRef.current = null;
-
     bufferFinalRef.current = "";
     setInterimText("");
 
@@ -239,9 +228,8 @@ export default function App() {
 
     setStatus("idle");
 
-    // اگه auto-stop شد، transcript رو نگه داریم مشکلی نداره
     if (auto) {
-      // no-op
+      // auto stop after silence - no-op
     }
   }
 
@@ -257,7 +245,7 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // SpeechRecognition init/re-init (وقتی showLive عوض میشه، behavior عوض میشه)
+  // SpeechRecognition init/re-init (وقتی showLive یا mode عوض میشه)
   useEffect(() => {
     const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!SR) {
@@ -270,7 +258,7 @@ export default function App() {
     rec.continuous = true;
 
     // ✅ اگر Live روشن: کلمه‌به‌کلمه (interim)
-    // ✅ اگر Live خاموش: فقط final (تمیزتر + معمولاً سریع‌تر/منطقی‌تر)
+    // ✅ اگر Live خاموش: فقط final (تمیزتر + منطقی‌تر)
     rec.interimResults = !!showLive;
 
     rec.onresult = (e) => {
@@ -286,27 +274,24 @@ export default function App() {
         else newInterim += txt;
       }
 
-      // نمایش: interim فقط برای UI (به بافر ارسال اضافه نمی‌شود)
       if (showLive) setInterimText(newInterim.trim());
+      if (!showLive) setInterimText("");
 
       if (newFinal.trim()) {
-        // ✅ final رو یک بار اضافه کن (بدون تکرار)
+        // نمایش final
         setFinalText((prev) => (prev + " " + newFinal).replace(/\s+/g, " ").trim());
 
-        // ✅ فقط final میره توی buffer ارسال
+        // ✅ فقط final جمع می‌شود (بدون تکرار)
         bufferFinalRef.current = (bufferFinalRef.current + " " + newFinal)
           .replace(/\s+/g, " ")
           .trim();
 
-        scheduleSendDebounced();
+        // ✅ هر بار که final جدید آمد، تلاش کن اگر فاصله زمانی اجازه می‌دهد ارسال کن
+        flushIfAllowed();
       }
-
-      // وقتی Live خاموشه، interim نداریم
-      if (!showLive) setInterimText("");
     };
 
     rec.onerror = () => {
-      // خطاهای گذرا رو تحمل می‌کنیم
       if (shouldListenRef.current) setStatus("listening");
     };
 
@@ -354,7 +339,7 @@ export default function App() {
             className={mode === "proactive" ? "chip active" : "chip"}
             onClick={() => setMode("proactive")}
           >
-            ⚡ Proactive
+            ⚡ Proactive (5s)
           </button>
           <button className={mode === "deep" ? "chip active" : "chip"} onClick={() => setMode("deep")}>
             🎧 Deep
@@ -384,7 +369,9 @@ export default function App() {
         <div className="card">
           <div className="cardTitle">Live transcript</div>
           <div className="transcriptBox">{transcriptToShow || "Say something..."}</div>
-          <div className="hint">Tip: If you see repeats, toggle Live off.</div>
+          <div className="hint">
+            Proactive sends at most once every 5 seconds.
+          </div>
         </div>
       )}
 
