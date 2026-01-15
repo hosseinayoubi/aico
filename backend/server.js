@@ -22,10 +22,12 @@ const PROACTIVE_SYSTEM_BASE =
   "Produce ONLY one short helpful suggestion (max 12 words) OR return an empty string if nothing useful. " +
   "Do not repeat earlier suggestions.";
 
+// ✅ Deep: سریع ولی منطقی + ساختارمند
 const DEEP_SYSTEM_BASE =
-  "You are an attentive AI listener. Listen carefully and answer thoroughly. " +
-  "Be clear, structured, and helpful. Long answers are allowed. " +
-  "If the user is still speaking or the input feels incomplete, ask a short follow-up question instead of guessing.";
+  "You are an attentive AI listener. Answer fast but thoughtfully. " +
+  "First give a short direct answer (1-2 sentences). " +
+  "Then, if useful, add a 'Details' section with bullet points. " +
+  "If the input is incomplete, ask ONE short clarifying question.";
 
 // ✅ مدل درست طبق داشبورد
 const DEFAULT_MODEL = "grok-4-1-fast-non-reasoning";
@@ -49,18 +51,11 @@ function buildSystemPrompt({ mode, userContext }) {
 }
 
 function getGenParams({ mode }) {
-  // proactive: کوتاه، سریع
-  // deep: طولانی‌تر، طبیعی‌تر
   if (mode === "deep") {
-    return {
-      temperature: 0.7,
-      max_tokens: 512,
-    };
+    // ✅ منطقی‌تر و سریع‌تر از 0.7/512
+    return { temperature: 0.4, max_tokens: 320 };
   }
-  return {
-    temperature: 0.2,
-    max_tokens: 32,
-  };
+  return { temperature: 0.2, max_tokens: 32 };
 }
 
 // -----------------------------
@@ -88,8 +83,6 @@ async function callXai({ text, userContext, mode }) {
   });
 
   const { temperature, max_tokens } = getGenParams({ mode: finalMode });
-
-  // guardrail: اگر کلاینت max_tokens فرستاد، محدودش کن
   const safeMaxTokens = clamp(max_tokens, 16, 800);
 
   const response = await fetch("https://api.x.ai/v1/chat/completions", {
@@ -152,9 +145,6 @@ app.post("/chat", async (req, res) => {
 const server = http.createServer(app);
 const wss = new WebSocketServer({ server });
 
-/**
- * Ping/Pong heartbeat to keep Railway / proxies happy
- */
 function heartbeat() {
   this.isAlive = true;
 }
@@ -172,16 +162,14 @@ wss.on("connection", (ws) => {
   );
 
   ws.on("message", async (raw) => {
-    // expected message:
-    // { type:"chat", text:"...", system:"...", mode:"deep"|"proactive", requestId:"..." }
     try {
       const msg = JSON.parse(raw.toString() || "{}");
 
+      // expected: { type:"chat", text, system, mode, requestId }
       if (!msg || typeof msg !== "object") {
         ws.send(JSON.stringify({ type: "error", error: "Invalid message" }));
         return;
       }
-
       if (msg.type !== "chat") {
         ws.send(JSON.stringify({ type: "error", error: "Unknown type" }));
         return;
@@ -220,13 +208,9 @@ wss.on("connection", (ws) => {
       ws.send(JSON.stringify({ type: "error", error: "Backend failed" }));
     }
   });
-
-  ws.on("close", () => {
-    // noop
-  });
 });
 
-// heartbeat interval
+// Ping/Pong heartbeat (Railway/proxies)
 const interval = setInterval(() => {
   wss.clients.forEach((ws) => {
     if (ws.isAlive === false) return ws.terminate();
