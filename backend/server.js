@@ -49,7 +49,6 @@ function buildSystemPrompt({ mode, userContext }) {
 
 function getGenParams({ mode }) {
   if (mode === "deep") return { temperature: 0.4, max_tokens: 320 };
-  // ✅ proactive طولانی‌تر از قبل
   return { temperature: 0.25, max_tokens: 96 };
 }
 
@@ -96,19 +95,6 @@ async function callXai({ text, userContext, mode }) {
   const reply = data?.choices?.[0]?.message?.content ?? "";
   return { ok: true, reply: String(reply) };
 }
-
-// HTTP endpoint (optional)
-app.post("/chat", async (req, res) => {
-  try {
-    const { text, system, mode } = req.body || {};
-    const out = await callXai({ text, userContext: system, mode });
-    if (!out.ok) return res.status(out.status || 500).json({ error: out.error, details: out.details });
-    return res.json({ reply: out.reply });
-  } catch (err) {
-    console.error("Backend error:", err);
-    return res.status(500).json({ error: "Backend failed" });
-  }
-});
 
 // WS
 const server = http.createServer(app);
