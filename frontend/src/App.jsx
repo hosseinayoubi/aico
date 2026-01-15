@@ -10,13 +10,19 @@ function makeId() {
 export default function App() {
   const [status, setStatus] = useState("idle"); // idle | unsupported | listening | thinking | replying | ws_error | backend_error
   const [wsStatus, setWsStatus] = useState("disconnected"); // disconnected | connecting | connected | reconnecting | ws_error
-  const [reply, setReply] = useState("");
-  const [liveReply, setLiveReply] = useState(""); // تایپ شونده
   const [systemPrompt, setSystemPrompt] = useState("You are a proactive AI copilot.");
   const [mode, setMode] = useState("proactive"); // proactive | deep
 
-  // متن شنیده‌شده (کلمه به کلمه)
-  const [transcript, setTranscript] = useState("");
+  // ✅ Toggle برای Live Transcript
+  const [showLive, setShowLive] = useState(true);
+
+  // فقط برای نمایش
+  const [finalText, setFinalText] = useState("");
+  const [interimText, setInterimText] = useState("");
+
+  // فقط آخرین جواب (بدون history)
+  const [reply, setReply] = useState("");
+  const [liveReply, setLiveReply] = useState("");
 
   const recognitionRef = useRef(null);
   const shouldListenRef = useRef(false);
@@ -25,15 +31,18 @@ export default function App() {
   const reconnectTimerRef = useRef(null);
   const lastRequestIdRef = useRef("");
 
-  // برای اینکه هر “وقفه کوتاه” یک بار ارسال کنیم (نه هر کلمه)
+  // برای ارسال با “مکث کوتاه” (فقط final را می‌فرستیم)
   const sendDebounceRef = useRef(null);
-  const bufferRef = useRef("");
+  const bufferFinalRef = useRef("");
 
-  // اگر 2 دقیقه چیزی نشنوه، stop کن
+  // throttle برای اینکه proactive زیادی call نزنه
+  const lastSendTsRef = useRef(0);
+
+  // auto-stop silence
   const silenceTimerRef = useRef(null);
-  const SILENCE_MS = 120000;
+  const SILENCE_MS = 120000; // 2 minutes
 
-  // تایپ‌افکت جواب
+  // type effect
   const typeTimerRef = useRef(null);
 
   const WS_URL = useMemo(() => import.meta.env.VITE_WS_URL, []);
@@ -51,13 +60,11 @@ export default function App() {
   function resetSilenceTimer() {
     clearSilenceTimer();
     silenceTimerRef.current = setTimeout(() => {
-      // 2 دقیقه سکوت
       stopListening(true);
     }, SILENCE_MS);
   }
 
   async function ensureMicPermission() {
-    // روی موبایل بهتره یکبار getUserMedia صدا زده بشه تا permission درست ثبت شه
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       stream.getTracks().forEach((t) => t.stop());
@@ -124,6 +131,26 @@ export default function App() {
     };
   }
 
+  function startTypeReply(fullText) {
+    if (typeTimerRef.current) clearInterval(typeTimerRef.current);
+
+    const words = String(fullText || "").split(/\s+/).filter(Boolean);
+    let i = 0;
+    setLiveReply("");
+
+    // اگر خالی بود همون خالی
+    if (!words.length) return;
+
+    typeTimerRef.current = setInterval(() => {
+      i += 1;
+      setLiveReply(words.slice(0, i).join(" "));
+      if (i >= words.length) {
+        clearInterval(typeTimerRef.current);
+        typeTimerRef.current = null;
+      }
+    }, 30);
+  }
+
   function sendToBackend(text) {
     const ws = wsRef.current;
     if (!ws || ws.readyState !== WebSocket.OPEN) {
@@ -132,10 +159,19 @@ export default function App() {
       return;
     }
 
+    const now = Date.now();
+
+    // ✅ throttle: proactive کمتر call بزنه
+    const minGap = mode === "proactive" ? 1500 : 800;
+    if (now - lastSendTsRef.current < minGap) {
+      return;
+    }
+    lastSendTsRef.current = now;
+
     const requestId = makeId();
     lastRequestIdRef.current = requestId;
-    setStatus("thinking");
 
+    setStatus("thinking");
     ws.send(
       JSON.stringify({
         type: "chat",
@@ -148,38 +184,20 @@ export default function App() {
   }
 
   function flushSend() {
-    const text = (bufferRef.current || "").trim();
+    const text = (bufferFinalRef.current || "").trim();
     if (!text) return;
-    bufferRef.current = "";
+
+    bufferFinalRef.current = "";
+    // ✅ فقط final متن تمیز میره سمت مدل
     sendToBackend(text);
   }
 
   function scheduleSendDebounced() {
     if (sendDebounceRef.current) clearTimeout(sendDebounceRef.current);
 
-    // وقتی کاربر یک مکث کوتاه داشت، ارسال کن (برای proactive خیلی خوبه)
-    const delay = mode === "proactive" ? 700 : 900;
-
-    sendDebounceRef.current = setTimeout(() => {
-      flushSend();
-    }, delay);
-  }
-
-  function startTypeReply(fullText) {
-    // تایپ افکت کلمه‌به‌کلمه
-    if (typeTimerRef.current) clearInterval(typeTimerRef.current);
-    const words = String(fullText || "").split(/\s+/).filter(Boolean);
-    let i = 0;
-    setLiveReply("");
-
-    typeTimerRef.current = setInterval(() => {
-      i += 1;
-      setLiveReply(words.slice(0, i).join(" "));
-      if (i >= words.length) {
-        clearInterval(typeTimerRef.current);
-        typeTimerRef.current = null;
-      }
-    }, 40);
+    // proactive کمی سریع‌تر
+    const delay = mode === "proactive" ? 650 : 900;
+    sendDebounceRef.current = setTimeout(() => flushSend(), delay);
   }
 
   async function startListening() {
@@ -187,7 +205,6 @@ export default function App() {
 
     const ok = await ensureMicPermission();
     if (!ok) {
-      // کاربر allow نکرده
       setStatus("idle");
       return;
     }
@@ -195,18 +212,26 @@ export default function App() {
     shouldListenRef.current = true;
     resetSilenceTimer();
 
+    // پاکسازی UI هر بار Start
+    setInterimText("");
+    setFinalText("");
+    bufferFinalRef.current = "";
+
     try {
       recognitionRef.current?.start();
-      setStatus("listening");
-    } catch {
-      // اگر start سریع پشت سر هم بخوره
-      setStatus("listening");
-    }
+    } catch {}
+    setStatus("listening");
   }
 
   function stopListening(auto = false) {
     shouldListenRef.current = false;
     clearSilenceTimer();
+
+    if (sendDebounceRef.current) clearTimeout(sendDebounceRef.current);
+    sendDebounceRef.current = null;
+
+    bufferFinalRef.current = "";
+    setInterimText("");
 
     try {
       recognitionRef.current?.stop();
@@ -214,9 +239,9 @@ export default function App() {
 
     setStatus("idle");
 
+    // اگه auto-stop شد، transcript رو نگه داریم مشکلی نداره
     if (auto) {
-      // اگر 2 دقیقه سکوت بود، یه پیام دوستانه
-      setTranscript((t) => t); // no-op
+      // no-op
     }
   }
 
@@ -232,7 +257,7 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // SpeechRecognition init
+  // SpeechRecognition init/re-init (وقتی showLive عوض میشه، behavior عوض میشه)
   useEffect(() => {
     const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!SR) {
@@ -244,50 +269,49 @@ export default function App() {
     rec.lang = "en-US";
     rec.continuous = true;
 
-    // ✅ کلمه‌به‌کلمه (interim)
-    rec.interimResults = true;
+    // ✅ اگر Live روشن: کلمه‌به‌کلمه (interim)
+    // ✅ اگر Live خاموش: فقط final (تمیزتر + معمولاً سریع‌تر/منطقی‌تر)
+    rec.interimResults = !!showLive;
 
     rec.onresult = (e) => {
       resetSilenceTimer();
 
-      let interim = "";
-      let finalChunk = "";
+      let newFinal = "";
+      let newInterim = "";
 
       for (let i = e.resultIndex; i < e.results.length; i++) {
         const r = e.results[i];
         const txt = r?.[0]?.transcript || "";
-        if (r.isFinal) finalChunk += txt;
-        else interim += txt;
+        if (r.isFinal) newFinal += txt;
+        else newInterim += txt;
       }
 
-      // نمایش تایپی: final + interim
-      setTranscript((prev) => {
-        const base = prev.replace(/\s+/g, " ").trim();
-        const shown = `${base}${base ? " " : ""}${finalChunk}`.replace(/\s+/g, " ").trim();
-        const withInterim = `${shown}${shown ? " " : ""}${interim}`.replace(/\s+/g, " ").trim();
-        return withInterim;
-      });
+      // نمایش: interim فقط برای UI (به بافر ارسال اضافه نمی‌شود)
+      if (showLive) setInterimText(newInterim.trim());
 
-      // به بافر ارسال اضافه کن (اما هر کلمه ارسال نکن)
-      const combined = `${finalChunk} ${interim}`.trim();
-      if (combined) {
-        bufferRef.current = (bufferRef.current + " " + combined).replace(/\s+/g, " ").trim();
+      if (newFinal.trim()) {
+        // ✅ final رو یک بار اضافه کن (بدون تکرار)
+        setFinalText((prev) => (prev + " " + newFinal).replace(/\s+/g, " ").trim());
+
+        // ✅ فقط final میره توی buffer ارسال
+        bufferFinalRef.current = (bufferFinalRef.current + " " + newFinal)
+          .replace(/\s+/g, " ")
+          .trim();
+
         scheduleSendDebounced();
       }
 
-      // اگر final داشتیم، transcript رو تمیز کنیم (interim حذف می‌شه با update بعدی)
-      if (finalChunk) {
-        setTranscript((prev) => prev.replace(/\s+/g, " ").trim());
-      }
+      // وقتی Live خاموشه، interim نداریم
+      if (!showLive) setInterimText("");
     };
 
     rec.onerror = () => {
-      // خطای گذرا زیاد رخ می‌ده؛ ما listening رو نگه می‌داریم
-      setStatus("listening");
+      // خطاهای گذرا رو تحمل می‌کنیم
+      if (shouldListenRef.current) setStatus("listening");
     };
 
     rec.onend = () => {
-      // ✅ دائم گوش بده تا وقتی Stop نزدی
+      // ✅ یک بار Start تا Stop
       if (shouldListenRef.current) {
         try {
           rec.start();
@@ -308,39 +332,79 @@ export default function App() {
         rec.stop();
       } catch {}
     };
-  }, [mode]);
+  }, [showLive, mode]);
+
+  const transcriptToShow = showLive
+    ? `${finalText}${finalText && interimText ? " " : ""}${interimText}`.trim()
+    : finalText;
 
   return (
-    <div className="app" style={{ maxWidth: 720, margin: "0 auto", padding: 16 }}>
-      <StatusBar status={status} wsStatus={wsStatus} mode={mode} />
+    <div className="appShell">
+      <div className="appTop">
+        <div className="brand">
+          <div className="logoDot" />
+          <div>
+            <div className="brandTitle">aico</div>
+            <div className="brandSub">Realtime voice copilot</div>
+          </div>
+        </div>
 
-      <div style={{ display: "flex", gap: 10, margin: "10px 0 16px" }}>
-        <button onClick={() => setMode("proactive")} style={{ opacity: mode === "proactive" ? 1 : 0.6 }}>
-          ⚡ Proactive (longer)
-        </button>
-        <button onClick={() => setMode("deep")} style={{ opacity: mode === "deep" ? 1 : 0.6 }}>
-          🎧 Deep (long)
-        </button>
-      </div>
+        <div className="controlsRow">
+          <button
+            className={mode === "proactive" ? "chip active" : "chip"}
+            onClick={() => setMode("proactive")}
+          >
+            ⚡ Proactive
+          </button>
+          <button className={mode === "deep" ? "chip active" : "chip"} onClick={() => setMode("deep")}>
+            🎧 Deep
+          </button>
 
-      <ChatBox systemPrompt={systemPrompt} setSystemPrompt={setSystemPrompt} />
-
-      <div style={{ marginTop: 12, padding: 12, border: "1px solid #334155", borderRadius: 8 }}>
-        <div style={{ opacity: 0.7, marginBottom: 8 }}>Live transcript (word by word)</div>
-        <div style={{ minHeight: 44, whiteSpace: "pre-wrap" }}>
-          {transcript || "Say something..."}
+          <label className="toggle">
+            <input
+              type="checkbox"
+              checked={showLive}
+              onChange={(e) => setShowLive(e.target.checked)}
+            />
+            <span className="toggleUi" />
+            <span className="toggleText">Live transcript</span>
+          </label>
         </div>
       </div>
 
-      <SuggestionPanel text={liveReply || reply || "Listening..."} />
-
-      <div style={{ display: "flex", gap: 10, marginTop: 12 }}>
-        <button onClick={startListening}>Start</button>
-        <button onClick={() => stopListening(false)}>Stop</button>
+      <div className="card">
+        <StatusBar status={status} wsStatus={wsStatus} mode={mode} />
       </div>
 
-      <div style={{ marginTop: 10, opacity: 0.75, fontSize: 12 }}>
-        WS: {WS_URL || "(missing VITE_WS_URL)"} | Auto-stop after: 2 minutes silence
+      <div className="card">
+        <ChatBox systemPrompt={systemPrompt} setSystemPrompt={setSystemPrompt} />
+      </div>
+
+      {showLive && (
+        <div className="card">
+          <div className="cardTitle">Live transcript</div>
+          <div className="transcriptBox">{transcriptToShow || "Say something..."}</div>
+          <div className="hint">Tip: If you see repeats, toggle Live off.</div>
+        </div>
+      )}
+
+      <div className="card">
+        <div className="cardTitle">Copilot</div>
+        <SuggestionPanel text={liveReply || reply || "Listening..."} />
+      </div>
+
+      <div className="bottomBar">
+        <button className="btn primary" onClick={startListening}>
+          Start
+        </button>
+        <button className="btn" onClick={() => stopListening(false)}>
+          Stop
+        </button>
+
+        <div className="meta">
+          <div>WS: {WS_URL || "(missing VITE_WS_URL)"}</div>
+          <div>Auto-stop: 2 minutes silence</div>
+        </div>
       </div>
     </div>
   );
