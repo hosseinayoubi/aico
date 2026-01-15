@@ -17,9 +17,9 @@ jobs:
         working-directory: frontend
         run: npm install
 
-      - name: Verify plugin exists
+      - name: Verify plugin exists (ESM)
         working-directory: frontend
-        run: node -e "require('@vitejs/plugin-react'); console.log('plugin ok')"
+        run: node -e "import('@vitejs/plugin-react').then(()=>console.log('plugin ok')).catch(e=>{console.error(e); process.exit(1);})"
 
       - name: Build frontend
         working-directory: frontend
