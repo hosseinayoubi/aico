@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
-import StatusBar from "./components/StatusBar";
-import SuggestionPanel from "./components/SuggestionPanel";
-import ChatBox from "./components/ChatBox";
+import StatusBar from "./components/StatusBar.jsx";
+import SuggestionPanel from "./components/SuggestionPanel.jsx";
+import ChatBox from "./components/ChatBox.jsx";
 
 export default function App() {
   const [status, setStatus] = useState("idle");
@@ -11,63 +11,7 @@ export default function App() {
   );
 
   const recognitionRef = useRef(null);
-  const wsRef = useRef(null);
 
-  // اتصال WebSocket
-  useEffect(() => {
-    const wsUrl = import.meta.env.VITE_WS_URL;
-
-    if (!wsUrl) {
-      setStatus("missing_ws_url");
-      return;
-    }
-
-    const ws = new WebSocket(wsUrl);
-    wsRef.current = ws;
-
-    ws.onopen = () => {
-      setStatus("ws_connected");
-    };
-
-    ws.onmessage = (event) => {
-      try {
-        const data = JSON.parse(event.data || "{}");
-
-        if (data.type === "status") {
-          // status هایی مثل connected / thinking
-          if (data.status === "thinking") setStatus("thinking");
-        }
-
-        if (data.type === "reply") {
-          setReply(data.reply || "");
-          setStatus("replying");
-        }
-
-        if (data.type === "error") {
-          setReply(data.error || "Error");
-          setStatus("backend_error");
-        }
-      } catch {
-        // اگر پیام JSON نبود
-      }
-    };
-
-    ws.onerror = () => {
-      setStatus("ws_error");
-    };
-
-    ws.onclose = () => {
-      setStatus("ws_closed");
-    };
-
-    return () => {
-      try {
-        ws.close();
-      } catch {}
-    };
-  }, []);
-
-  // SpeechRecognition
   useEffect(() => {
     const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
 
@@ -81,24 +25,27 @@ export default function App() {
     rec.continuous = true;
     rec.interimResults = false;
 
-    rec.onresult = (e) => {
+    rec.onresult = async (e) => {
       const spoken = e.results[e.results.length - 1][0].transcript;
-
-      // اگر WS آماده نیست
-      const ws = wsRef.current;
-      if (!ws || ws.readyState !== WebSocket.OPEN) {
-        setStatus("ws_not_ready");
-        return;
-      }
 
       setStatus("thinking");
 
-      ws.send(
-        JSON.stringify({
-          text: spoken,
-          system: systemPrompt
-        })
-      );
+      try {
+        const r = await fetch(import.meta.env.VITE_BACKEND_URL + "/chat", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            text: spoken,
+            system: systemPrompt,
+          }),
+        });
+
+        const data = await r.json();
+        setReply(data.reply || "");
+        setStatus("replying");
+      } catch {
+        setStatus("backend_error");
+      }
     };
 
     recognitionRef.current = rec;
