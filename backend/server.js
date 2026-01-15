@@ -16,28 +16,20 @@ app.get("/health", (req, res) => {
   res.json({ ok: true });
 });
 
-/**
- * ✅ ثابتِ پرامپت proactive (همون نسخه‌ی اصلاح‌شده‌ای که گفتی)
- * نکته: اگر کاربر داخل UI یک "Context/Prompt" هم بنویسه، ما به انتهای همین system اضافه می‌کنیم.
- */
 const PROACTIVE_SYSTEM_BASE =
   "You are a real-time proactive copilot. You receive partial live transcript every 1.5 seconds. " +
   "Produce ONLY one short helpful suggestion (max 12 words) OR return an empty string if nothing useful. " +
   "Do not repeat earlier suggestions.";
 
-/**
- * Call xAI Chat Completions
- * - model: grok-4.1-fast-non-reasoning  ✅ مطابق کلید تو
- * - temperature: 0.1
- * - max_tokens: 24
- */
 async function callXai({ text, userContext }) {
   const XAI_API_KEY = process.env.XAI_API_KEY;
   if (!XAI_API_KEY) {
     return { ok: false, status: 500, error: "XAI_API_KEY is missing" };
   }
 
-  const model = process.env.XAI_MODEL || "grok-4.1-fast-non-reasoning"; // ✅
+  // ✅ مدل درست مطابق داشبورد کلید تو (با خط تیره، بدون نقطه)
+  const model = process.env.XAI_MODEL || "grok-4-1-fast-non-reasoning";
+
   const temperature = 0.1;
   const max_tokens = 24;
 
@@ -46,7 +38,6 @@ async function callXai({ text, userContext }) {
     return { ok: false, status: 400, error: "Missing text" };
   }
 
-  // اگر کاربر توی UI یک context نوشته باشد، به system اضافه می‌کنیم
   const cleanUserContext = (userContext ?? "").toString().trim();
   const systemContent = cleanUserContext
     ? `${PROACTIVE_SYSTEM_BASE}\n\nContext:\n${cleanUserContext}`
@@ -56,7 +47,7 @@ async function callXai({ text, userContext }) {
     method: "POST",
     headers: {
       Authorization: `Bearer ${XAI_API_KEY}`,
-      "Content-Type": "application/json",
+      "Content-Type": "application/json"
     },
     body: JSON.stringify({
       model,
@@ -64,10 +55,9 @@ async function callXai({ text, userContext }) {
       max_tokens,
       messages: [
         { role: "system", content: systemContent },
-        // این همون LIVE_TRANSCRIPT_LAST_300_CHARS توست (اینجا از text میاد)
-        { role: "user", content: cleanText },
-      ],
-    }),
+        { role: "user", content: cleanText }
+      ]
+    })
   });
 
   const data = await response.json().catch(() => ({}));
@@ -78,7 +68,7 @@ async function callXai({ text, userContext }) {
       ok: false,
       status: response.status,
       error: "xAI request failed",
-      details: data,
+      details: data
     };
   }
 
@@ -86,25 +76,16 @@ async function callXai({ text, userContext }) {
   return { ok: true, reply: String(reply) };
 }
 
-/**
- * HTTP endpoint used by frontend (fetch)
- * body: { text: string, system: string }
- * - text  => transcript
- * - system => user context/prompt
- */
+// HTTP endpoint for current frontend (fetch VITE_BACKEND_URL + "/chat")
 app.post("/chat", async (req, res) => {
   try {
     const { text, system } = req.body || {};
-
     const out = await callXai({ text, userContext: system });
 
     if (!out.ok) {
-      return res
-        .status(out.status || 500)
-        .json({ error: out.error, details: out.details });
+      return res.status(out.status || 500).json({ error: out.error, details: out.details });
     }
 
-    // ممکنه reply خالی باشه (طبق prompt). این باید OK باشه.
     return res.json({ reply: out.reply });
   } catch (err) {
     console.error("Backend error:", err);
@@ -112,10 +93,7 @@ app.post("/chat", async (req, res) => {
   }
 });
 
-/**
- * WebSocket endpoint (optional / future)
- * expects message JSON: { text: string, system?: string }
- */
+// HTTP + WebSocket on same port
 const server = http.createServer(app);
 const wss = new WebSocketServer({ server });
 
@@ -125,10 +103,7 @@ wss.on("connection", (ws) => {
   ws.on("message", async (raw) => {
     try {
       const msg = JSON.parse(raw.toString() || "{}");
-      const text = msg?.text;
-      const system = msg?.system;
-
-      const out = await callXai({ text, userContext: system });
+      const out = await callXai({ text: msg.text, userContext: msg.system });
 
       if (!out.ok) {
         ws.send(JSON.stringify({ type: "error", error: out.error }));
