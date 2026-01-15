@@ -12,49 +12,85 @@ const PORT = process.env.PORT || 8080;
 app.use(cors());
 app.use(express.json());
 
-app.get("/health", (req, res) => {
-  res.json({ ok: true });
-});
+app.get("/health", (req, res) => res.json({ ok: true }));
 
+// -----------------------------
+// Prompts / Modes
+// -----------------------------
 const PROACTIVE_SYSTEM_BASE =
-  "You are a real-time proactive copilot. You receive partial live transcript every 1.5 seconds. " +
+  "You are a real-time proactive copilot. You receive partial live transcript. " +
   "Produce ONLY one short helpful suggestion (max 12 words) OR return an empty string if nothing useful. " +
   "Do not repeat earlier suggestions.";
 
-// ✅ مدل درست طبق داشبورد شما (Available models)
+const DEEP_SYSTEM_BASE =
+  "You are an attentive AI listener. Listen carefully and answer thoroughly. " +
+  "Be clear, structured, and helpful. Long answers are allowed. " +
+  "If the user is still speaking or the input feels incomplete, ask a short follow-up question instead of guessing.";
+
+// ✅ مدل درست طبق داشبورد
 const DEFAULT_MODEL = "grok-4-1-fast-non-reasoning";
 
-// ✅ اگر کسی اشتباه grok-4.1-... داد، این خودش اصلاح می‌کنه
+// اگر کسی اشتباه grok-4.1-... داد، خودکار اصلاح می‌کنه
 function normalizeModelName(model) {
   const m = (model || "").trim();
   if (!m) return DEFAULT_MODEL;
-
-  // تبدیل grok-4.1-fast-... به grok-4-1-fast-...
-  // و همچنین هر نقطه‌ای را در بخش نسخه با خط‌تیره جایگزین می‌کند
-  return m
-    .replace("grok-4.1-", "grok-4-1-")
-    .replace("grok-4.1", "grok-4-1");
+  return m.replace("grok-4.1-", "grok-4-1-").replace("grok-4.1", "grok-4-1");
 }
 
-async function callXai({ text, userContext }) {
+function clamp(n, min, max) {
+  const x = Number.isFinite(Number(n)) ? Number(n) : min;
+  return Math.max(min, Math.min(max, x));
+}
+
+function buildSystemPrompt({ mode, userContext }) {
+  const cleanCtx = (userContext ?? "").toString().trim();
+  const base = mode === "deep" ? DEEP_SYSTEM_BASE : PROACTIVE_SYSTEM_BASE;
+  return cleanCtx ? `${base}\n\nContext:\n${cleanCtx}` : base;
+}
+
+function getGenParams({ mode }) {
+  // proactive: کوتاه، سریع
+  // deep: طولانی‌تر، طبیعی‌تر
+  if (mode === "deep") {
+    return {
+      temperature: 0.7,
+      max_tokens: 512,
+    };
+  }
+  return {
+    temperature: 0.2,
+    max_tokens: 32,
+  };
+}
+
+// -----------------------------
+// xAI Call
+// -----------------------------
+async function callXai({ text, userContext, mode }) {
   const XAI_API_KEY = process.env.XAI_API_KEY;
   if (!XAI_API_KEY) {
     return { ok: false, status: 500, error: "XAI_API_KEY is missing" };
   }
 
   const model = normalizeModelName(process.env.XAI_MODEL || DEFAULT_MODEL);
-  const temperature = 0.1;
-  const max_tokens = 24;
 
   const cleanText = (text ?? "").toString().trim();
   if (!cleanText) {
     return { ok: false, status: 400, error: "Missing text" };
   }
 
-  const cleanUserContext = (userContext ?? "").toString().trim();
-  const systemContent = cleanUserContext
-    ? `${PROACTIVE_SYSTEM_BASE}\n\nContext:\n${cleanUserContext}`
-    : PROACTIVE_SYSTEM_BASE;
+  const normalizedMode = (mode || "proactive").toString().trim().toLowerCase();
+  const finalMode = normalizedMode === "deep" ? "deep" : "proactive";
+
+  const systemContent = buildSystemPrompt({
+    mode: finalMode,
+    userContext,
+  });
+
+  const { temperature, max_tokens } = getGenParams({ mode: finalMode });
+
+  // guardrail: اگر کلاینت max_tokens فرستاد، محدودش کن
+  const safeMaxTokens = clamp(max_tokens, 16, 800);
 
   const response = await fetch("https://api.x.ai/v1/chat/completions", {
     method: "POST",
@@ -65,7 +101,7 @@ async function callXai({ text, userContext }) {
     body: JSON.stringify({
       model,
       temperature,
-      max_tokens,
+      max_tokens: safeMaxTokens,
       messages: [
         { role: "system", content: systemContent },
         { role: "user", content: cleanText },
@@ -89,10 +125,13 @@ async function callXai({ text, userContext }) {
   return { ok: true, reply: String(reply) };
 }
 
+// -----------------------------
+// HTTP endpoint (optional)
+// -----------------------------
 app.post("/chat", async (req, res) => {
   try {
-    const { text, system } = req.body || {};
-    const out = await callXai({ text, userContext: system });
+    const { text, system, mode } = req.body || {};
+    const out = await callXai({ text, userContext: system, mode });
 
     if (!out.ok) {
       return res
@@ -107,30 +146,96 @@ app.post("/chat", async (req, res) => {
   }
 });
 
+// -----------------------------
 // HTTP + WebSocket
+// -----------------------------
 const server = http.createServer(app);
 const wss = new WebSocketServer({ server });
 
+/**
+ * Ping/Pong heartbeat to keep Railway / proxies happy
+ */
+function heartbeat() {
+  this.isAlive = true;
+}
+
 wss.on("connection", (ws) => {
-  ws.send(JSON.stringify({ type: "status", status: "connected" }));
+  ws.isAlive = true;
+  ws.on("pong", heartbeat);
+
+  ws.send(
+    JSON.stringify({
+      type: "status",
+      status: "connected",
+      model: normalizeModelName(process.env.XAI_MODEL || DEFAULT_MODEL),
+    })
+  );
 
   ws.on("message", async (raw) => {
+    // expected message:
+    // { type:"chat", text:"...", system:"...", mode:"deep"|"proactive", requestId:"..." }
     try {
       const msg = JSON.parse(raw.toString() || "{}");
-      const out = await callXai({ text: msg.text, userContext: msg.system });
 
-      if (!out.ok) {
-        ws.send(JSON.stringify({ type: "error", error: out.error }));
+      if (!msg || typeof msg !== "object") {
+        ws.send(JSON.stringify({ type: "error", error: "Invalid message" }));
         return;
       }
 
-      ws.send(JSON.stringify({ type: "reply", reply: out.reply }));
+      if (msg.type !== "chat") {
+        ws.send(JSON.stringify({ type: "error", error: "Unknown type" }));
+        return;
+      }
+
+      const requestId = (msg.requestId ?? "").toString();
+      const mode = (msg.mode ?? "proactive").toString();
+      const text = msg.text;
+      const system = msg.system;
+
+      const out = await callXai({ text, userContext: system, mode });
+
+      if (!out.ok) {
+        ws.send(
+          JSON.stringify({
+            type: "error",
+            error: out.error,
+            status: out.status,
+            requestId,
+            details: out.details,
+          })
+        );
+        return;
+      }
+
+      ws.send(
+        JSON.stringify({
+          type: "reply",
+          reply: out.reply,
+          requestId,
+          mode: mode === "deep" ? "deep" : "proactive",
+        })
+      );
     } catch (err) {
       console.error("WS backend error:", err);
       ws.send(JSON.stringify({ type: "error", error: "Backend failed" }));
     }
   });
+
+  ws.on("close", () => {
+    // noop
+  });
 });
+
+// heartbeat interval
+const interval = setInterval(() => {
+  wss.clients.forEach((ws) => {
+    if (ws.isAlive === false) return ws.terminate();
+    ws.isAlive = false;
+    ws.ping();
+  });
+}, 30000);
+
+wss.on("close", () => clearInterval(interval));
 
 server.listen(PORT, () => {
   const effectiveModel = normalizeModelName(process.env.XAI_MODEL || DEFAULT_MODEL);
