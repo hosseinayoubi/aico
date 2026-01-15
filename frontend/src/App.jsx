@@ -52,30 +52,32 @@ export default function App() {
   }, [systemPrompt]);
 
   return (
-    <div className="app">
+    <div className="app" style={{ maxWidth: 720, margin: "0 auto", padding: 16 }}>
       <StatusBar status={status} />
 
       <ChatBox systemPrompt={systemPrompt} setSystemPrompt={setSystemPrompt} />
 
       <SuggestionPanel text={reply || "Listening..."} />
 
-      <button
-        onClick={() => {
-          recognitionRef.current?.start();
-          setStatus("listening");
-        }}
-      >
-        Start
-      </button>
+      <div style={{ display: "flex", gap: 10, marginTop: 12 }}>
+        <button
+          onClick={() => {
+            recognitionRef.current?.start();
+            setStatus("listening");
+          }}
+        >
+          Start
+        </button>
 
-      <button
-        onClick={() => {
-          recognitionRef.current?.stop();
-          setStatus("idle");
-        }}
-      >
-        Stop
-      </button>
+        <button
+          onClick={() => {
+            recognitionRef.current?.stop();
+            setStatus("idle");
+          }}
+        >
+          Stop
+        </button>
+      </div>
     </div>
   );
 }
