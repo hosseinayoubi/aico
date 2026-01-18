@@ -24,32 +24,31 @@ export default function App() {
   const shouldListenRef = useRef(false);
 
   const wsRef = useRef(null);
-  const reconnectTimerRef = useRef(null);
   const lastRequestIdRef = useRef("");
 
   const bufferFinalRef = useRef("");
-  const lastSendTsRef = useRef(0);
-  const flushTimerRef = useRef(null);
 
-  const silenceTimerRef = useRef(null);
-  const SILENCE_MS = 120000;
+  // 🔑 adaptive timers
+  const shortSilenceTimerRef = useRef(null); // ~700ms
+  const longFallbackTimerRef = useRef(null); // 5s
+  const lastSendTsRef = useRef(0);
+
+  const silenceStopTimerRef = useRef(null);
+  const SILENCE_STOP_MS = 120000;
 
   const typeTimerRef = useRef(null);
 
   const WS_URL = useMemo(() => import.meta.env.VITE_WS_URL, []);
 
-  /* ---------------- WS ---------------- */
+  /* ---------------- WebSocket ---------------- */
 
   function connectWS() {
     if (!WS_URL) return;
-
     if (
       wsRef.current &&
       (wsRef.current.readyState === WebSocket.OPEN ||
         wsRef.current.readyState === WebSocket.CONNECTING)
-    ) {
-      return;
-    }
+    ) return;
 
     setWsStatus("connecting");
     const ws = new WebSocket(WS_URL);
@@ -69,7 +68,7 @@ export default function App() {
 
     ws.onclose = () => {
       setWsStatus("reconnecting");
-      reconnectTimerRef.current = setTimeout(connectWS, 1200);
+      setTimeout(connectWS, 1200);
     };
   }
 
@@ -88,14 +87,14 @@ export default function App() {
     }, 25);
   }
 
-  /* ---------------- Sending logic ---------------- */
+  /* ---------------- Sending ---------------- */
 
   function sendNow(text) {
     if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
 
+    lastSendTsRef.current = Date.now();
     const requestId = makeId();
     lastRequestIdRef.current = requestId;
-    lastSendTsRef.current = Date.now();
 
     setStatus("thinking");
 
@@ -110,27 +109,49 @@ export default function App() {
     );
   }
 
-  function scheduleFlush(delay) {
-    if (flushTimerRef.current) clearTimeout(flushTimerRef.current);
-    flushTimerRef.current = setTimeout(() => {
+  function clearAdaptiveTimers() {
+    if (shortSilenceTimerRef.current) clearTimeout(shortSilenceTimerRef.current);
+    if (longFallbackTimerRef.current) clearTimeout(longFallbackTimerRef.current);
+  }
+
+  function scheduleAdaptiveSend() {
+    clearAdaptiveTimers();
+
+    const now = Date.now();
+    const gap = now - lastSendTsRef.current;
+
+    // 🔥 کوتاه: اگر کاربر مکث کرد → سریع جواب بده
+    shortSilenceTimerRef.current = setTimeout(() => {
       const text = bufferFinalRef.current.trim();
       if (!text) return;
+
       bufferFinalRef.current = "";
       sendNow(text);
-    }, delay);
+    }, 700);
+
+    // 🧱 fallback: اگر silence نیامد → 5s
+    if (gap < 5000) {
+      longFallbackTimerRef.current = setTimeout(() => {
+        const text = bufferFinalRef.current.trim();
+        if (!text) return;
+
+        bufferFinalRef.current = "";
+        sendNow(text);
+      }, 5000 - gap);
+    }
   }
 
   /* ---------------- Listening ---------------- */
 
-  function resetSilenceTimer() {
-    if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
-    silenceTimerRef.current = setTimeout(stopListening, SILENCE_MS);
+  function resetSilenceStop() {
+    if (silenceStopTimerRef.current) clearTimeout(silenceStopTimerRef.current);
+    silenceStopTimerRef.current = setTimeout(stopListening, SILENCE_STOP_MS);
   }
 
-  async function startListening() {
+  function startListening() {
     connectWS();
     shouldListenRef.current = true;
-    resetSilenceTimer();
+    resetSilenceStop();
 
     setFinalText("");
     setInterimText("");
@@ -145,6 +166,7 @@ export default function App() {
 
   function stopListening() {
     shouldListenRef.current = false;
+    clearAdaptiveTimers();
     try {
       recognitionRef.current.stop();
     } catch {}
@@ -166,7 +188,7 @@ export default function App() {
     rec.interimResults = true;
 
     rec.onresult = (e) => {
-      resetSilenceTimer();
+      resetSilenceStop();
 
       let newFinal = "";
       let newInterim = "";
@@ -182,21 +204,7 @@ export default function App() {
       if (newFinal.trim()) {
         setFinalText((p) => (p + " " + newFinal).trim());
         bufferFinalRef.current += " " + newFinal;
-
-        const now = Date.now();
-        const gap = now - lastSendTsRef.current;
-
-        if (lastSendTsRef.current === 0) {
-          // ✅ اولین پاسخ سریع
-          sendNow(bufferFinalRef.current.trim());
-          bufferFinalRef.current = "";
-        } else if (gap >= 5000) {
-          sendNow(bufferFinalRef.current.trim());
-          bufferFinalRef.current = "";
-        } else {
-          // ✅ تضمین ارسال حتی اگر user ساکت شد
-          scheduleFlush(5000 - gap);
-        }
+        scheduleAdaptiveSend();
       }
     };
 
@@ -212,8 +220,6 @@ export default function App() {
     return () => rec.stop();
   }, [showLive, mode]);
 
-  /* ---------------- Init ---------------- */
-
   useEffect(connectWS, []);
 
   const transcriptToShow = showLive
@@ -225,7 +231,7 @@ export default function App() {
       <StatusBar status={status} wsStatus={wsStatus} mode={mode} />
 
       <div className="controlsRow">
-        <button onClick={() => setMode("proactive")}>⚡ Proactive</button>
+        <button onClick={() => setMode("proactive")}>⚡ Proactive (adaptive)</button>
         <button onClick={() => setMode("deep")}>🎧 Deep</button>
 
         <label>
