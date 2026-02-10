@@ -439,7 +439,7 @@ export default function App() {
         </button>
 
         <div className="meta">
-          <div>WS: {WS_URL || "(missing VITE_WS_URL)"}</div>
+          <div>aico.weomeo.win</div>
           <div>Auto-stop: 2 minutes silence</div>
         </div>
       </div>
