@@ -380,7 +380,6 @@ export default function App() {
           <div className="logoDot" />
           <div>
             <div className="brandTitle">aico</div>
-            <div className="brandSub">aico.weomeo.win</div>
             <div className="brandSub">Realtime voice copilot</div>
           </div>
         </div>
