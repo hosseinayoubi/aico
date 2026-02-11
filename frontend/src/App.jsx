@@ -261,6 +261,7 @@ export default function App() {
       recognitionRef.current?.start();
     } catch {}
     setStatus("listening");
+    setIsListening(true);
   }
 
   function stopListening(auto = false) {
