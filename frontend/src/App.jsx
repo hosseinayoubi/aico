@@ -277,7 +277,7 @@ export default function App() {
     } catch {}
 
     setStatus("idle");
-
+    setIsListening(false);
     if (auto) {
       // auto stop after silence - no-op
     }
