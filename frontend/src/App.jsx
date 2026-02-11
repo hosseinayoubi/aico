@@ -329,8 +329,9 @@ export default function App() {
 
       if (newFinal.trim()) {
         // نمایش final
-        setFinalText((prev) => (prev + " " + newFinal).replace(/\s+/g, " ").trim());
-
+    if (showLive) {
+  setFinalText((prev) => (prev + " " + newFinal).replace(/\s+/g, " ").trim());
+}
         // ✅ فقط final جمع می‌شود (بدون تکرار)
         bufferFinalRef.current = (bufferFinalRef.current + " " + newFinal)
           .replace(/\s+/g, " ")
