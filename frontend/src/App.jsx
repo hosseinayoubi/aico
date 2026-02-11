@@ -442,7 +442,7 @@ export default function App() {
 
 <div className="bottomBar">
   <button
-    className={isListening ? "btn" : "btn primary"}
+    className={isListening ? "btn primary" : "btn"}
     onClick={startListening}
     disabled={isListening}
   >
@@ -450,7 +450,7 @@ export default function App() {
   </button>
 
   <button
-    className={isListening ? "btn primary" : "btn"}
+    className={isListening ? "btn" : "btn primary"}
     onClick={() => stopListening(false)}
     disabled={!isListening}
   >
