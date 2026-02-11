@@ -418,11 +418,13 @@ export default function App() {
 <div
   className="card"
   style={{
-    minHeight: 155,
+    maxHeight: showLive ? 500 : 0,
+    overflow: "hidden",
     opacity: showLive ? 1 : 0,
-    visibility: showLive ? "visible" : "hidden",
-    transition: "opacity 150ms ease",
-    pointerEvents: showLive ? "auto" : "none",
+    transition: "all 220ms ease",
+    marginTop: showLive ? 12 : 0,
+    padding: showLive ? 14 : 0,
+    borderWidth: showLive ? 1 : 0,
   }}
 >
   <div className="cardTitle">Live transcript</div>
