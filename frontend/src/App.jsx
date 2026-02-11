@@ -23,6 +23,7 @@ export default function App() {
   // فقط آخرین جواب (بدون history)
   const [reply, setReply] = useState("");
   const [liveReply, setLiveReply] = useState("");
+  const [isListening, setIsListening] = useState(false);
 
   const recognitionRef = useRef(null);
   const shouldListenRef = useRef(false);
