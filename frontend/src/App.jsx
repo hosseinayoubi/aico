@@ -440,13 +440,22 @@ export default function App() {
         <SuggestionPanel text={liveReply || reply || "Listening..."} />
       </div>
 
-      <div className="bottomBar">
-        <button className="btn primary" onClick={startListening}>
-          Start
-        </button>
-        <button className="btn" onClick={() => stopListening(false)}>
-          Stop
-        </button>
+<div className="bottomBar">
+  <button
+    className={isListening ? "btn" : "btn primary"}
+    onClick={startListening}
+    disabled={isListening}
+  >
+    Start
+  </button>
+
+  <button
+    className={isListening ? "btn primary" : "btn"}
+    onClick={() => stopListening(false)}
+    disabled={!isListening}
+  >
+    Stop
+  </button>
 
         <div className="meta">
           <div>aico.weomeo.win</div>
