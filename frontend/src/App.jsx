@@ -415,17 +415,22 @@ export default function App() {
       <div className="card">
         <ChatBox systemPrompt={systemPrompt} setSystemPrompt={setSystemPrompt} />
       </div>
-
-      {showLive && (
-        <div className="card">
-          <div className="cardTitle">Live transcript</div>
-          <div className="transcriptBox">{transcriptToShow || "Say something..."}</div>
-          <div className="hint">
-            Adaptive: pauses send faster. Fallback gate: ~5s in proactive.
-          </div>
-        </div>
-      )}
-
+<div
+  className="card"
+  style={{
+    minHeight: 155,
+    opacity: showLive ? 1 : 0,
+    visibility: showLive ? "visible" : "hidden",
+    transition: "opacity 150ms ease",
+    pointerEvents: showLive ? "auto" : "none",
+  }}
+>
+  <div className="cardTitle">Live transcript</div>
+  <div className="transcriptBox">{transcriptToShow || "Say something..."}</div>
+  <div className="hint">
+    Adaptive: pauses send faster. Fallback gate: ~5s in proactive.
+  </div>
+</div>
       <div className="card">
         <div className="cardTitle">Copilot</div>
         <SuggestionPanel text={liveReply || reply || "Listening..."} />
