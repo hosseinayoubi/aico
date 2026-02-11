@@ -14,7 +14,7 @@ export default function App() {
   const [mode, setMode] = useState("proactive"); // proactive | deep
 
   // ✅ Toggle برای Live Transcript
-  const [showLive, setShowLive] = useState(true);
+  const [showLive, setShowLive] = useState(false);
 
   // فقط برای نمایش
   const [finalText, setFinalText] = useState("");
